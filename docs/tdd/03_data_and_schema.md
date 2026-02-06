@@ -36,6 +36,17 @@ Behavior: if `idempotency_key` already exists in `feature_input_batches`, return
 
 ## Aggregated Feature Store (Derived Only)
 ### merchant_daily_features (PK: subject_ref, date)
+**CCT control buckets (authoritative)**
+- `free_in_sum`, `free_in_count`
+- `constrained_out_sum`, `constrained_out_count`
+- `pass_through_in_sum`, `pass_through_out_sum`
+- `artificial_in_sum`, `artificial_out_sum`
+- `conditional_in_sum`, `conditional_out_sum`
+- `unknown_in_sum`, `unknown_out_sum`
+- `free_cash_net`
+- `owner_dependency_ratio`, `pass_through_ratio`, `unknown_flow_ratio`
+
+**Optional legacy signals (derived, if still useful)**
 - `txn_count`, `sales_sum`, `unique_payers`
 - `avg_ticket`, `ticket_variance`
 - `night_ratio`, `weekend_ratio`

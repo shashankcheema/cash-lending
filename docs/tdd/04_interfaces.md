@@ -23,6 +23,11 @@
 - `compute_rolling_features(as_of_date, windows[]) -> void`
 - `get_feature_freshness() -> date`
 
+## Cash Control (CCT) Classification and Aggregation
+- `classify_role_purpose(record) -> txn_semantic`
+- `classify_cct(txn_semantic) -> (cct, confidence)`
+- `aggregate_daily_control(txns_with_cct) -> daily_control_features`
+
 ## Analytics Engine
 - `compute_health(subject_ref, as_of_date) -> HealthPacket`
 - `compute_ews(subject_ref, as_of_date) -> EWSPacket`

@@ -298,7 +298,7 @@ participant M as Feature Freshness Marker
 participant AU as Audit Log
 
 J->>FB: Run for date=D
-FB->>T: Query derived feature inputs where date(ts)=D and direction=credit
+FB->>T: Query derived feature inputs where date(ts)=D for all directions
 T-->>FB: txns[]
 FB->>AG: Group by subject_ref and compute daily aggregates
 AG-->>FB: daily_features_by_subject[]
