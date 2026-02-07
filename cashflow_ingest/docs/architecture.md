@@ -47,6 +47,7 @@ sequenceDiagram
     Note right of API: Validation counts (INVALID_*, MISSING_REQUIRED_FIELD)
     Note right of API: If record_status exists: keep SUCCESS only
     Note right of API: partial_record=true counted as accepted_partial_rows
+    Note right of API: If declared range provided: validate inferred range
     API->>Idem: infer_min_max_ts(events)
     Idem-->>API: (min_ts, max_ts)
     API->>Idem: compute_batch_idempotency_key(...)
@@ -108,16 +109,21 @@ Examples below show shape only; raw identifiers are not persisted and should not
 ### Stage 1: HTTP Ingress
 **Input (multipart form):**
 - `subject_ref`: `mrc_001`
+- `subject_ref_version`: `v1` (optional)
 - `source`: `PAYTM`
 - `file`: `transactions.csv` (bytes)
+- `input_start_date` / `input_end_date` (optional)
 
 **Output:**
 - Raw file bytes (in-memory only)
 - `file_hash_sha256`: `e3b0c44298fc1c149...`
+- `filename_hash` and `file_ext` (stored; raw filename not persisted)
 
 **Input (JSON feed):**
 - `subject_ref`, `source`, `watermark_ts`
 - `events[]` of canonical fields
+- `subject_ref_version` (optional)
+- `input_start_date` / `input_end_date` (optional)
 
 ### Stage 2: CSV Adapter (`read_csv_bytes_with_extras`)
 **Input:**
@@ -198,6 +204,9 @@ Validation failures are counted and rejected per row.
 **Output:**
 - `idempotency_key`: `sha256(subject_ref|source|watermark|min_ts|max_ts|event_count|payload_hash)`
 
+### Declared Range Validation (Optional)
+If `input_start_date` and `input_end_date` are provided, inferred `min_ts`/`max_ts` must fall within the declared range. If not, the request fails with `400`.
+
 ### Stage 7: Aggregation (`compute_daily_inflow_outflow`)
 **Input:**
 - `[CanonicalTxn]`
@@ -228,15 +237,18 @@ Validation failures are counted and rejected per row.
   "status": "INGESTED_DERIVED_ONLY",
   "batch_id": 1,
   "subject_ref": "mrc_001",
+  "subject_ref_version": "v1",
   "source": "PAYTM",
-  "filename": "transactions.csv",
+  "filename_hash": "8c5a...e3f1",
+  "file_ext": ".csv",
   "file_hash_sha256": "e3b0c44298fc1c149...",
   "idempotency_key": "c1b3...9a2f",
   "rows_accepted": 2,
   "rows_rejected": 0,
   "rejection_breakdown": {},
   "accepted_partial_rows": 0,
-  "range": { "min_ts": "2025-11-05T09:01:00+05:30", "max_ts": "2025-11-05T12:45:10+05:30" },
+  "inferred_range": { "min_ts": "2025-11-05T09:01:00+05:30", "max_ts": "2025-11-05T12:45:10+05:30" },
+  "declared_range": { "input_start_date": "2025-11-05", "input_end_date": "2025-11-05" },
   "daily_aggregate_days": 1
 }
 ```
@@ -247,13 +259,15 @@ Validation failures are counted and rejected per row.
   "status": "INGESTED_DERIVED_ONLY",
   "batch_id": 2,
   "subject_ref": "mrc_001",
+  "subject_ref_version": "v1",
   "source": "PAYTM",
   "idempotency_key": "7af1...c9e3",
   "rows_accepted": 2,
   "rows_rejected": 0,
   "rejection_breakdown": {},
   "watermark_ts": "2025-11-06T00:00:00+05:30",
-  "range": { "min_ts": "2025-11-05T09:01:00+05:30", "max_ts": "2025-11-05T12:45:10+05:30" },
+  "inferred_range": { "min_ts": "2025-11-05T09:01:00+05:30", "max_ts": "2025-11-05T12:45:10+05:30" },
+  "declared_range": { "input_start_date": "2025-11-05", "input_end_date": "2025-11-05" },
   "daily_aggregate_days": 1
 }
 ```

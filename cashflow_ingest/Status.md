@@ -94,11 +94,16 @@ cashflow_ingest/
 - Track row-level rejection counts (counts only).
 - Track accepted partial rows via `partial_record` quality flag.
 - Guardrail on garbage batches via `MIN_ACCEPT_RATIO` (default 10%).
+- Support declared range inputs (`input_start_date`, `input_end_date`) with validation.
+- Accept `subject_ref_version` for aliasing (does not affect idempotency).
 
 Request (multipart form):
 - `subject_ref` (string): internal merchant identifier (non-PII).
+- `subject_ref_version` (string, optional): alias version for re-keying.
 - `source` (string): e.g. `PAYTM`, `BANK`.
 - `file` (CSV).
+- `input_start_date` (YYYY-MM-DD, optional)
+- `input_end_date` (YYYY-MM-DD, optional)
 
 Required CSV columns:
 - `merchant_id`
@@ -121,9 +126,12 @@ Optional columns (Paytm-like):
 - Enforce idempotency with watermark-based key.
 - Guardrail on garbage batches via `MIN_ACCEPT_RATIO`.
 - Replay protection on idempotency key.
+- Support declared range inputs (`input_start_date`, `input_end_date`) with validation.
+- Accept `subject_ref_version` for aliasing (does not affect idempotency).
 
 Request (JSON):
-- `subject_ref`, `source`, `watermark_ts`, `events[]`
+- `subject_ref`, `subject_ref_version`, `source`, `watermark_ts`, `events[]`
+- `input_start_date`, `input_end_date` (optional)
 
 Required event fields:
 - `merchant_id`
@@ -144,12 +152,17 @@ Required event fields:
 7. Track accepted rows with `partial_record=true` as a quality metric.
 8. Normalize to `CanonicalTxn`.
 9. Infer date range (`min_ts`, `max_ts`).
-10. Compute deterministic idempotency key.
+10. If declared range provided: validate inferred range within declared range.
+11. Compute deterministic idempotency key (uses declared range if provided).
 11. Compute derived daily aggregates.
 12. Persist via storage port.
 
 Feeds pipeline is equivalent, with JSON parsing and idempotency key:
 `sha256(subject_ref|source|watermark|min_ts|max_ts|event_count|payload_hash)`.
+
+Filename handling:
+- Raw filenames are not persisted.
+- Stored values: `filename_hash` and `file_ext`.
 
 ---
 
