@@ -1,0 +1,33 @@
+[project]
+name = "cashflow-ingest"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "shashank.cheema@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "structlog (>=25.5.0,<26.0.0)",
+    "prometheus-client (>=0.24.1,<0.25.0)",
+    "uvicorn (>=0.40.0,<0.41.0)",
+    "psycopg (>=3.3.2,<4.0.0)",
+    "fastapi (>=0.128.3,<0.129.0)",
+    "python-multipart (>=0.0.22,<0.0.23)",
+    "pandas (>=3.0.0,<4.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "cashflow_ingest"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.2,<10.0.0)",
+    "httpx (>=0.28.1,<0.29.0)",
+    "ruff (>=0.15.0,<0.16.0)",
+    "mypy (>=1.19.1,<2.0.0)"
+]
