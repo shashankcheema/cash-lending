@@ -23,6 +23,7 @@ Responsibilities included:
 - Ingest transaction files and feeds.
 - Validate and normalize data.
 - Compute derived-only aggregates.
+- Classify CCT and compute daily control-bucket aggregates.
 - Enforce idempotent batch ingestion.
 - Prepare clean inputs for downstream analytics (DP, CCT, EWS, scoring).
 
@@ -65,6 +66,10 @@ cashflow_ingest/
 
     pipeline/
       normalizer.py   # Raw → CanonicalTxn normalization
+      semantic_classifier.py # Role or purpose classification
+      cct_classifier.py      # CCT classification + confidence
+      cct_aggregates.py      # Control-bucket aggregates
+      cct_enums.py           # CCT enum
       idempotency.py  # Deterministic batch key computation
       aggregates.py   # Derived-only daily aggregates
       storage_port.py # Persistence interface (port)
@@ -112,12 +117,16 @@ Required CSV columns:
 - `direction`
 - `channel`
 
-Only these columns are read; everything else is dropped. This allows:
+Only required and optional columns are read; other extras are dropped. This allows:
 - Minimal RBI-safe files.
 - Paytm-like files with extra columns (extras ignored).
 Optional columns (Paytm-like):
 - `record_status` (if present: only `SUCCESS` rows are processed)
 - `partial_record` (quality flag; accepted if otherwise valid)
+- `raw_category` (ephemeral, optional)
+- `raw_narration` (ephemeral, optional)
+- `raw_counterparty_token` (ephemeral, optional)
+- `payer_token` (ephemeral, optional; preferred)
 
 `POST /v1/ingest/feeds`
 - Purpose:

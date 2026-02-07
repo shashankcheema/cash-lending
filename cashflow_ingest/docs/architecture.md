@@ -21,7 +21,10 @@ This document describes the current ingestion architecture, processing stages, a
 - `cashflow_ingest/ingest/adapters/csv_file.py`: CSV parsing and required-column enforcement.
 - `cashflow_ingest/ingest/pipeline/normalizer.py`: row normalization and validation.
 - `cashflow_ingest/ingest/pipeline/idempotency.py`: deterministic idempotency key.
-- `cashflow_ingest/ingest/pipeline/aggregates.py`: derived daily aggregates.
+- `cashflow_ingest/ingest/pipeline/semantic_classifier.py`: role or purpose classification (ephemeral).
+- `cashflow_ingest/ingest/pipeline/cct_classifier.py`: CCT classification with confidence + ambiguity handling.
+- `cashflow_ingest/ingest/pipeline/cct_aggregates.py`: daily control-bucket aggregates + ratios.
+- `cashflow_ingest/ingest/pipeline/aggregates.py`: legacy daily inflow or outflow aggregates.
 - `cashflow_ingest/ingest/pipeline/storage_port.py`: storage interface.
 - `cashflow_ingest/ingest/pipeline/memory_sink.py`: in-memory storage adapter.
 
@@ -36,13 +39,15 @@ sequenceDiagram
     participant CSV as CSV Adapter
     participant Norm as Normalizer
     participant Idem as Idempotency
-    participant Agg as Aggregates
+    participant Sem as Semantic
+    participant CCT as CCT Classifier
+    participant Agg as Control Aggregates
     participant Store as StoragePort (InMemorySink)
 
     Client->>API: POST /v1/ingest/files (multipart)
     API->>CSV: read_csv_bytes_with_extras(raw_bytes)
     CSV-->>API: DataFrame (required + extras)
-    API->>Norm: normalize_df_to_events(df_required, subject_ref)
+    API->>Norm: normalize_df_to_events(df, subject_ref)
     Norm-->>API: [CanonicalTxn]
     Note right of API: Validation counts (INVALID_*, MISSING_REQUIRED_FIELD)
     Note right of API: If record_status exists: keep SUCCESS only
@@ -52,11 +57,17 @@ sequenceDiagram
     Idem-->>API: (min_ts, max_ts)
     API->>Idem: compute_batch_idempotency_key(...)
     Idem-->>API: idempotency_key
-    API->>Agg: compute_daily_inflow_outflow(events)
-    Agg-->>API: {day: (inflow, outflow)}
+    API->>Sem: classify_role_purpose(events)
+    Sem-->>API: TxnSemantic[]
+    API->>CCT: classify_cct(TxnSemantic)
+    CCT-->>API: CCTResult[]
+    API->>Agg: aggregate_daily_control(events_with_cct)
+    Agg-->>API: daily_control_aggs
     API->>Store: persist_batch(...)
     Store-->>API: batch_id
     API->>Store: persist_daily_aggregates(...)
+    Store-->>API: ok
+    API->>Store: persist_daily_control_aggregates(...)
     Store-->>API: ok
     API-->>Client: 200 OK + batch metadata
 ```
@@ -83,7 +94,9 @@ sequenceDiagram
     participant API as FastAPI
     participant Norm as Normalizer
     participant Idem as Idempotency
-    participant Agg as Aggregates
+    participant Sem as Semantic
+    participant CCT as CCT Classifier
+    participant Agg as Control Aggregates
     participant Store as StoragePort (InMemorySink)
 
     Client->>API: POST /v1/ingest/feeds (JSON)
@@ -94,11 +107,17 @@ sequenceDiagram
     Idem-->>API: (min_ts, max_ts)
     API->>Idem: compute_feed_idempotency_key(...)
     Idem-->>API: idempotency_key
-    API->>Agg: compute_daily_inflow_outflow(events)
-    Agg-->>API: {day: (inflow, outflow)}
+    API->>Sem: classify_role_purpose(events)
+    Sem-->>API: TxnSemantic[]
+    API->>CCT: classify_cct(TxnSemantic)
+    CCT-->>API: CCTResult[]
+    API->>Agg: aggregate_daily_control(events_with_cct)
+    Agg-->>API: daily_control_aggs
     API->>Store: persist_batch(...)
     Store-->>API: batch_id
     API->>Store: persist_daily_aggregates(...)
+    Store-->>API: ok
+    API->>Store: persist_daily_control_aggregates(...)
     Store-->>API: ok
     API-->>Client: 200 OK + batch metadata
 ```
@@ -139,6 +158,9 @@ MRC-001,2025-11-05T12:45:10+05:30,80.00,debit,BANK
 **Output:**
 - DataFrame with required columns and any extras (if present).
 - Required columns are enforced.
+Optional columns used ephemerally (if present):
+- `raw_category`, `raw_narration`, `raw_counterparty_token`, `partial_record`
+- `payer_token` (preferred)
 
 ### Stage 3: Normalizer (`normalize_df_to_events`)
 **Input:**
@@ -153,7 +175,11 @@ MRC-001,2025-11-05T12:45:10+05:30,80.00,debit,BANK
     event_ts=2025-11-05T09:01:00+05:30,
     amount=120.50,
     direction="credit",
-    channel="UPI"
+    channel="UPI",
+    raw_category=None,
+    raw_narration=None,
+    raw_counterparty_token=None,
+    partial_record=False
   ),
   CanonicalTxn(
     subject_ref="mrc_001",
@@ -161,7 +187,11 @@ MRC-001,2025-11-05T12:45:10+05:30,80.00,debit,BANK
     event_ts=2025-11-05T12:45:10+05:30,
     amount=80.00,
     direction="debit",
-    channel="BANK"
+    channel="BANK",
+    raw_category=None,
+    raw_narration=None,
+    raw_counterparty_token=None,
+    partial_record=False
   )
 ]
 ```
@@ -207,7 +237,20 @@ Validation failures are counted and rejected per row.
 ### Declared Range Validation (Optional)
 If `input_start_date` and `input_end_date` are provided, inferred `min_ts`/`max_ts` must fall within the declared range. If not, the request fails with `400`.
 
-### Stage 7: Aggregation (`compute_daily_inflow_outflow`)
+### Stage 7: CCT Classification + Aggregation
+**Input:**
+- `[CanonicalTxn]` (ephemeral)
+
+**Process:**
+- `classify_role_purpose(record) -> TxnSemantic`
+- `classify_cct(txn_semantic) -> (cct, confidence)` with ambiguity handling
+- `aggregate_daily_control(txns_with_cct) -> daily_control_aggs`
+
+**Output (derived only):**
+- Daily control buckets and ratios
+- `unknown_cct_count` and `unique_payers_count` per day
+
+### Stage 8: Legacy Aggregation (`compute_daily_inflow_outflow`)
 **Input:**
 - `[CanonicalTxn]`
 
@@ -218,10 +261,11 @@ If `input_start_date` and `input_end_date` are provided, inferred `min_ts`/`max_
 }
 ```
 
-### Stage 8: Storage (`StoragePort`)
+### Stage 9: Storage (`StoragePort`)
 **Input:**
-- Batch metadata: subject, source, filename, file hash, idempotency key, rows accepted/rejected, date range
+- Batch metadata: subject, source, filename_hash, file_ext, file hash, idempotency key, rows accepted/rejected, date range, cct_unknown_rate
 - Daily aggregates: `day -> (inflow, outflow)`
+- Daily control aggregates: `day -> control buckets + ratios`
 
 **Output:**
 - `batch_id` (int)
@@ -249,7 +293,9 @@ If `input_start_date` and `input_end_date` are provided, inferred `min_ts`/`max_
   "accepted_partial_rows": 0,
   "inferred_range": { "min_ts": "2025-11-05T09:01:00+05:30", "max_ts": "2025-11-05T12:45:10+05:30" },
   "declared_range": { "input_start_date": "2025-11-05", "input_end_date": "2025-11-05" },
-  "daily_aggregate_days": 1
+  "daily_aggregate_days": 1,
+  "daily_control_days": 1,
+  "cct_unknown_rate": 0.0435
 }
 ```
 
@@ -268,7 +314,9 @@ If `input_start_date` and `input_end_date` are provided, inferred `min_ts`/`max_
   "watermark_ts": "2025-11-06T00:00:00+05:30",
   "inferred_range": { "min_ts": "2025-11-05T09:01:00+05:30", "max_ts": "2025-11-05T12:45:10+05:30" },
   "declared_range": { "input_start_date": "2025-11-05", "input_end_date": "2025-11-05" },
-  "daily_aggregate_days": 1
+  "daily_aggregate_days": 1,
+  "daily_control_days": 1,
+  "cct_unknown_rate": 0.0435
 }
 ```
 

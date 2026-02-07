@@ -33,6 +33,7 @@ class InMemorySink(StoragePort):
         rows_rejected: int,
         range_start: date,
         range_end: date,
+        cct_unknown_rate: float,
     ) -> int:
         if idempotency_key in self._batches:
             raise DuplicateBatchError(f"batch already ingested: {idempotency_key}")
@@ -51,6 +52,7 @@ class InMemorySink(StoragePort):
             "rows_rejected": rows_rejected,
             "range_start": range_start,
             "range_end": range_end,
+            "cct_unknown_rate": round(float(cct_unknown_rate), 6),
         }
         return batch_id
 
@@ -66,4 +68,17 @@ class InMemorySink(StoragePort):
                 "day": day,
                 "inflow": round(inflow, 2),
                 "outflow": round(outflow, 2),
+            })
+
+    def persist_daily_control_aggregates(
+        self,
+        *,
+        subject_ref: str,
+        daily_control_aggs: Dict[str, dict],
+    ) -> None:
+        for day, payload in daily_control_aggs.items():
+            self._daily.append({
+                "subject_ref": subject_ref,
+                "day": day,
+                "control": payload,
             })

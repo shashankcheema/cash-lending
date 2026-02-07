@@ -20,6 +20,7 @@ This service is part of a larger lending / cash-flow intelligence platform. It p
 - Canonical in-memory normalization with row-level validation.
 - Deterministic idempotency key generation.
 - Derived daily inflow/outflow aggregation.
+- CCT classification and daily control-bucket aggregates (FREE/CONSTRAINED/PASS_THROUGH/ARTIFICIAL/CONDITIONAL/UNKNOWN).
 - In-memory persistence via `StoragePort`.
 - Duplicate batch detection (`409 Conflict`).
 - Paytm-like support with optional `record_status` filtering (only `SUCCESS` rows).
@@ -50,10 +51,13 @@ Required CSV columns:
 - `direction`
 - `channel`
 
-Extras are dropped by design.
-Optional columns (Paytm-like):
+Extras are ignored by default. Optional columns used ephemerally for CCT and quality:
 - `record_status` (if present: only `SUCCESS` rows are processed)
 - `partial_record` (quality flag; accepted if otherwise valid)
+- `raw_category` (ephemeral, optional)
+- `raw_narration` (ephemeral, optional)
+- `raw_counterparty_token` (ephemeral, optional)
+- `payer_token` (ephemeral, optional; preferred)
 
 Response includes:
 - `batch_id`, `idempotency_key`, file hash
@@ -61,6 +65,8 @@ Response includes:
 - `rows_accepted`, `rows_rejected`, `rejection_breakdown`, `accepted_partial_rows`
 - inferred date range
 - number of aggregate days
+- `daily_control_days`, `cct_unknown_rate`
+- `payer_token_present` (true if any payer_token/counterparty token was present)
 
 Example:
 ```bash
@@ -81,6 +87,8 @@ JSON body:
 - `input_end_date` (YYYY-MM-DD, optional)
 - `events` (array of objects):
   - `merchant_id`, `ts`, `amount`, `direction`, `channel`
+  - optional: `raw_category`, `raw_narration`, `raw_counterparty_token`, `partial_record`
+  - optional preferred: `payer_token`
 
 Response includes:
 - `batch_id`, `idempotency_key`
@@ -88,6 +96,8 @@ Response includes:
 - `watermark_ts`
 - `declared_range` (if provided), `inferred_range` (always)
 - number of aggregate days
+- `daily_control_days`, `cct_unknown_rate`
+- `payer_token_present` (true if any payer_token/counterparty token was present)
 
 Example:
 ```bash
@@ -127,7 +137,8 @@ curl -X POST http://localhost:8000/v1/ingest/feeds \
 8. Infer `min_ts`/`max_ts`.
 9. Compute deterministic idempotency key.
 10. Aggregate daily inflow/outflow totals.
-11. Persist batch metadata + daily aggregates via `StoragePort`.
+11. Classify CCT + aggregate daily control buckets and ratios.
+12. Persist batch metadata + daily aggregates + daily control aggregates via `StoragePort`.
 
 Feeds follow the same pipeline with JSON parsing and a feed-specific idempotency key:
 `sha256(subject_ref|source|watermark|min_ts|max_ts|event_count|payload_hash)`.
@@ -175,6 +186,10 @@ cashflow_ingest/
 
     pipeline/
       normalizer.py   # Raw → CanonicalTxn normalization
+      semantic_classifier.py # Role or purpose classification
+      cct_classifier.py      # CCT classification + confidence
+      cct_aggregates.py      # Control-bucket aggregates
+      cct_enums.py           # CCT enum
       idempotency.py  # Deterministic batch key computation
       aggregates.py   # Derived-only daily aggregates
       storage_port.py # Persistence interface (port)
@@ -191,8 +206,12 @@ cashflow_ingest/
 
 ## What Is Explicitly Not Implemented Yet
 - Postgres persistence.
-- Feed ingestion (JSON events).
 - Observability / metrics / auth / rate limiting.
+
+## CCT Configuration
+- `MIN_CCT_CONFIDENCE` (default `0.70`, set `0` to disable)
+- `AMBIGUITY_DELTA` (default `0.05`)
+- `CCT_THRESHOLDS_JSON` (optional per-CCT overrides, e.g. `{\"FREE\":0.75,\"PASS_THROUGH\":0.65}`)
 
 ## Immediate Next Safe Improvements (Ideas)
 - Request size limits and structured logging (no raw payloads).

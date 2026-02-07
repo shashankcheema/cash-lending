@@ -33,6 +33,10 @@ class CanonicalTxn(BaseModel):
     amount: float
     direction: Direction
     channel: Channel
+    raw_category: str | None = None
+    raw_narration: str | None = None
+    raw_counterparty_token: str | None = None
+    partial_record: bool = False
 
     @field_validator("amount")
     @classmethod
@@ -54,6 +58,11 @@ class FeedEvent(BaseModel):
     amount: object
     direction: object
     channel: object
+    raw_category: object | None = None
+    raw_narration: object | None = None
+    raw_counterparty_token: object | None = None
+    payer_token: object | None = None
+    partial_record: object | None = None
 
 
 class FeedIngestRequest(BaseModel):

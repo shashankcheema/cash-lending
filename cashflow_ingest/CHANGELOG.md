@@ -11,4 +11,6 @@ All notable changes to this project will be documented in this file.
 - Added declared date range inputs (`input_start_date`, `input_end_date`) with validation and idempotency usage.
 - Added optional `subject_ref_version` for aliasing (does not affect idempotency).
 - Persist batch filename as hash + extension only (raw filename not stored).
+- Added CCT classification with confidence and ambiguity handling.
+- Added daily control-bucket aggregates + ratios and `cct_unknown_rate`.
 - Updated docs (README, Status, Architecture) to reflect current behavior.

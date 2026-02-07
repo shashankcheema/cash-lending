@@ -19,6 +19,7 @@ from cashflow_ingest.ingest.pipeline.idempotency import (
     infer_min_max_ts,
 )
 from cashflow_ingest.ingest.pipeline.aggregates import compute_daily_inflow_outflow
+from cashflow_ingest.ingest.pipeline.cct_aggregates import aggregate_daily_control
 from cashflow_ingest.ingest.pipeline.memory_sink import DuplicateBatchError
 
 router = APIRouter(prefix="/v1/ingest", tags=["ingest"])
@@ -145,9 +146,8 @@ async def ingest_file(
                 },
             )
 
-        df_required = df[list(REQUIRED_COLUMNS)].copy()
         events, validation_breakdown, valid_indices = normalize_df_to_events(
-            df_required,
+            df,
             subject_ref=subject_ref,
         )
         rejection_breakdown = _merge_counts(rejection_breakdown, validation_breakdown)
@@ -257,6 +257,11 @@ async def ingest_file(
         )
 
         daily = compute_daily_inflow_outflow(events)
+        daily_control = aggregate_daily_control(events)
+        unknown_total = sum(v["derived"]["unknown_cct_count"] for v in daily_control.values()) if daily_control else 0
+        total_count = sum(sum(v["counts"].values()) for v in daily_control.values()) if daily_control else 0
+        cct_unknown_rate = (unknown_total / total_count) if total_count else 0.0
+        payer_token_present = any(e.raw_counterparty_token for e in events)
 
         storage = request.app.state.storage
         try:
@@ -272,10 +277,15 @@ async def ingest_file(
                 rows_rejected=rows_rejected,
                 range_start=min_ts.date(),
                 range_end=max_ts.date(),
+                cct_unknown_rate=cct_unknown_rate,
             )
             storage.persist_daily_aggregates(
                 subject_ref=subject_ref,
                 daily_aggs=daily,
+            )
+            storage.persist_daily_control_aggregates(
+                subject_ref=subject_ref,
+                daily_control_aggs=daily_control,
             )
         except DuplicateBatchError as e:
             raise HTTPException(status_code=409, detail=str(e))
@@ -298,6 +308,9 @@ async def ingest_file(
             "range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
             "inferred_range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
             "daily_aggregate_days": len(daily),
+            "daily_control_days": len(daily_control),
+            "cct_unknown_rate": round(cct_unknown_rate, 6),
+            "payer_token_present": payer_token_present,
         }
         if declared_min_ts is not None:
             response["declared_range"] = {
@@ -359,6 +372,11 @@ async def ingest_feed(
                     "amount": e["amount"],
                     "direction": e["direction"],
                     "channel": e["channel"],
+                    "raw_category": e.get("raw_category"),
+                    "raw_narration": e.get("raw_narration"),
+                    "raw_counterparty_token": e.get("raw_counterparty_token"),
+                    "payer_token": e.get("payer_token"),
+                    "partial_record": e.get("partial_record"),
                 }
                 for e in events_payload
             ]
@@ -442,6 +460,11 @@ async def ingest_feed(
             )
 
         daily = compute_daily_inflow_outflow(events)
+        daily_control = aggregate_daily_control(events)
+        unknown_total = sum(v["derived"]["unknown_cct_count"] for v in daily_control.values()) if daily_control else 0
+        total_count = sum(sum(v["counts"].values()) for v in daily_control.values()) if daily_control else 0
+        cct_unknown_rate = (unknown_total / total_count) if total_count else 0.0
+        payer_token_present = any(e.raw_counterparty_token for e in events)
         storage = request.app.state.storage
         try:
             batch_id = storage.persist_batch(
@@ -456,10 +479,15 @@ async def ingest_feed(
                 rows_rejected=rows_rejected,
                 range_start=min_ts.date(),
                 range_end=max_ts.date(),
+                cct_unknown_rate=cct_unknown_rate,
             )
             storage.persist_daily_aggregates(
                 subject_ref=payload.subject_ref,
                 daily_aggs=daily,
+            )
+            storage.persist_daily_control_aggregates(
+                subject_ref=payload.subject_ref,
+                daily_control_aggs=daily_control,
             )
         except DuplicateBatchError as e:
             raise HTTPException(status_code=409, detail=str(e))
@@ -478,6 +506,9 @@ async def ingest_feed(
             "range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
             "inferred_range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
             "daily_aggregate_days": len(daily),
+            "daily_control_days": len(daily_control),
+            "cct_unknown_rate": round(cct_unknown_rate, 6),
+            "payer_token_present": payer_token_present,
         }
         if declared_min_ts is not None:
             response["declared_range"] = {

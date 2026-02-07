@@ -20,6 +20,7 @@ class StoragePort(ABC):
         rows_rejected: int,
         range_start: date,
         range_end: date,
+        cct_unknown_rate: float,
     ) -> int:
         """Returns batch_id"""
 
@@ -31,3 +32,12 @@ class StoragePort(ABC):
         daily_aggs: Dict[date, Tuple[float, float]],
     ) -> None:
         """daily_aggs: day -> (inflow, outflow)"""
+
+    @abstractmethod
+    def persist_daily_control_aggregates(
+        self,
+        *,
+        subject_ref: str,
+        daily_control_aggs: Dict[str, dict],
+    ) -> None:
+        """daily_control_aggs: day -> control-bucket aggregates"""

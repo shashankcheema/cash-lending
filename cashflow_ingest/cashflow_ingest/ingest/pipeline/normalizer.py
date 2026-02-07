@@ -25,6 +25,13 @@ def _is_missing(val: object) -> bool:
     return False
 
 
+def _first_present(row: pd.Series, keys: list[str]) -> str | None:
+    for k in keys:
+        if k in row and not _is_missing(row.get(k)):
+            return str(row.get(k)).strip()
+    return None
+
+
 def normalize_df_to_events(
     df: pd.DataFrame,
     *,
@@ -98,6 +105,17 @@ def normalize_df_to_events(
             rejection_breakdown["INVALID_CHANNEL"] = rejection_breakdown.get("INVALID_CHANNEL", 0) + 1
             continue
 
+        raw_category = _first_present(row, ["raw_category", "category", "txn_category"])
+        raw_narration = _first_present(row, ["raw_narration", "narration", "note", "remarks"])
+        raw_counterparty_token = _first_present(
+            row,
+            ["payer_token", "counterparty_token", "raw_counterparty_token", "payer_id", "vpa", "upi_id"],
+        )
+        partial_record_raw = row.get("partial_record")
+        partial_record = False
+        if not _is_missing(partial_record_raw):
+            partial_record = str(partial_record_raw).strip().lower() in {"1", "true", "t", "yes", "y"}
+
         evt = CanonicalTxn(
             subject_ref=subject_ref,
             merchant_id=str(merchant_id).strip(),
@@ -105,6 +123,10 @@ def normalize_df_to_events(
             amount=float(amt_val) if pd.notna(amt_val) else None,
             direction=Direction(direction_val),
             channel=Channel(channel_val),
+            raw_category=raw_category,
+            raw_narration=raw_narration,
+            raw_counterparty_token=raw_counterparty_token,
+            partial_record=partial_record,
         )
         events.append(evt)
         valid_indices.append(i)
