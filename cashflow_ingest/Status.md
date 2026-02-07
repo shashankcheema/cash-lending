@@ -94,6 +94,7 @@ cashflow_ingest/
 - Purpose:
 - Ingest CSV files containing transaction records.
 - Compute derived aggregates.
+- Classify CCT and compute daily control-bucket aggregates.
 - Enforce idempotency.
 - Filter failures when `record_status` exists.
 - Track row-level rejection counts (counts only).
@@ -109,6 +110,11 @@ Request (multipart form):
 - `file` (CSV).
 - `input_start_date` (YYYY-MM-DD, optional)
 - `input_end_date` (YYYY-MM-DD, optional)
+
+Response includes:
+- `filename_hash`, `file_ext` (raw filename not returned)
+- `declared_range` (if provided), `inferred_range` (always)
+- `daily_control_days`, `cct_unknown_rate`, `payer_token_present`
 
 Required CSV columns:
 - `merchant_id`

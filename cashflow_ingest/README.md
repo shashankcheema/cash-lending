@@ -67,6 +67,7 @@ Response includes:
 - number of aggregate days
 - `daily_control_days`, `cct_unknown_rate`
 - `payer_token_present` (true if any payer_token/counterparty token was present)
+- `filename_hash`, `file_ext` (raw filename not returned)
 
 Example:
 ```bash

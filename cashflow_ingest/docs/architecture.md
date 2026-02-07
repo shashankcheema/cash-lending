@@ -136,7 +136,7 @@ Examples below show shape only; raw identifiers are not persisted and should not
 **Output:**
 - Raw file bytes (in-memory only)
 - `file_hash_sha256`: `e3b0c44298fc1c149...`
-- `filename_hash` and `file_ext` (stored; raw filename not persisted)
+- `filename_hash` and `file_ext` (stored; raw filename not persisted or returned)
 
 **Input (JSON feed):**
 - `subject_ref`, `source`, `watermark_ts`
@@ -222,6 +222,7 @@ Validation failures are counted and rejected per row.
 
 **Output:**
 - `idempotency_key`: `sha256(subject_ref|source|file_hash|min_date|max_date)`
+- If declared range is provided, the idempotency key uses declared start/end dates.
 
 ### Stage 6b: Feed Idempotency (`compute_feed_idempotency_key`)
 **Input:**
@@ -295,7 +296,8 @@ If `input_start_date` and `input_end_date` are provided, inferred `min_ts`/`max_
   "declared_range": { "input_start_date": "2025-11-05", "input_end_date": "2025-11-05" },
   "daily_aggregate_days": 1,
   "daily_control_days": 1,
-  "cct_unknown_rate": 0.0435
+  "cct_unknown_rate": 0.0435,
+  "payer_token_present": false
 }
 ```
 
@@ -316,7 +318,8 @@ If `input_start_date` and `input_end_date` are provided, inferred `min_ts`/`max_
   "declared_range": { "input_start_date": "2025-11-05", "input_end_date": "2025-11-05" },
   "daily_aggregate_days": 1,
   "daily_control_days": 1,
-  "cct_unknown_rate": 0.0435
+  "cct_unknown_rate": 0.0435,
+  "payer_token_present": false
 }
 ```
 

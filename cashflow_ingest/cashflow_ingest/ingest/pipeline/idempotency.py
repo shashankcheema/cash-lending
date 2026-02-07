@@ -16,13 +16,15 @@ def compute_batch_idempotency_key(
     subject_ref: str,
     source: str,
     file_hash_hex: str,
-    min_ts: datetime,
-    max_ts: datetime,
+    min_ts: date | datetime,
+    max_ts: date | datetime,
 ) -> str:
     """
     Stable key: subject + source + file hash + inferred date range.
     """
-    payload = f"{subject_ref}|{source}|{file_hash_hex}|{min_ts.date()}|{max_ts.date()}".encode("utf-8")
+    min_date = min_ts.date() if hasattr(min_ts, "date") else min_ts
+    max_date = max_ts.date() if hasattr(max_ts, "date") else max_ts
+    payload = f"{subject_ref}|{source}|{file_hash_hex}|{min_date}|{max_date}".encode("utf-8")
     return sha256_hex(payload)
 
 

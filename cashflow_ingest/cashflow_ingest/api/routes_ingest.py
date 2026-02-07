@@ -92,17 +92,14 @@ def _parse_date(val: str | None) -> date | None:
 def _range_from_declared(
     declared_start: date | None,
     declared_end: date | None,
-) -> tuple[datetime | None, datetime | None]:
+) -> tuple[date | None, date | None]:
     if declared_start is None and declared_end is None:
         return None, None
     if declared_start is None or declared_end is None:
         raise ValueError("both input_start_date and input_end_date must be provided")
     if declared_start > declared_end:
         raise ValueError("input_start_date must be <= input_end_date")
-    return (
-        datetime.combine(declared_start, time.min),
-        datetime.combine(declared_end, time.max),
-    )
+    return declared_start, declared_end
 
 
 @router.post("/files")
@@ -230,23 +227,34 @@ async def ingest_file(
         min_ts, max_ts = infer_min_max_ts(events)
         declared_start = _parse_date(input_start_date)
         declared_end = _parse_date(input_end_date)
-        declared_min_ts, declared_max_ts = _range_from_declared(declared_start, declared_end)
-        if declared_min_ts is not None:
-            if min_ts.date() < declared_start or max_ts.date() > declared_end:
+        try:
+            declared_min_date, declared_max_date = _range_from_declared(declared_start, declared_end)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "invalid_declared_range",
+                    "message": str(e),
+                    "input_start_date": input_start_date,
+                    "input_end_date": input_end_date,
+                },
+            )
+        if declared_min_date is not None:
+            if min_ts.date() < declared_min_date or max_ts.date() > declared_max_date:
                 raise HTTPException(
                     status_code=400,
                     detail={
                         "error": "inferred range outside declared range",
                         "declared_range": {
-                            "input_start_date": declared_start.isoformat(),
-                            "input_end_date": declared_end.isoformat(),
+                            "input_start_date": declared_min_date.isoformat(),
+                            "input_end_date": declared_max_date.isoformat(),
                         },
                         "inferred_range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
                     },
                 )
 
-        key_min_ts = declared_min_ts or min_ts
-        key_max_ts = declared_max_ts or max_ts
+        key_min_ts = declared_min_date or min_ts.date()
+        key_max_ts = declared_max_date or max_ts.date()
 
         idem_key = compute_batch_idempotency_key(
             subject_ref=subject_ref,
@@ -296,7 +304,6 @@ async def ingest_file(
             "subject_ref": subject_ref,
             "subject_ref_version": subject_ref_version,
             "source": source,
-            "filename": filename,
             "filename_hash": filename_hash,
             "file_ext": file_ext,
             "file_hash_sha256": file_hash,
@@ -312,10 +319,10 @@ async def ingest_file(
             "cct_unknown_rate": round(cct_unknown_rate, 6),
             "payer_token_present": payer_token_present,
         }
-        if declared_min_ts is not None:
+        if declared_min_date is not None:
             response["declared_range"] = {
-                "input_start_date": declared_start.isoformat(),
-                "input_end_date": declared_end.isoformat(),
+                "input_start_date": declared_min_date.isoformat(),
+                "input_end_date": declared_max_date.isoformat(),
             }
         return response
 
@@ -404,23 +411,34 @@ async def ingest_feed(
         min_ts, max_ts = infer_min_max_ts(events)
         declared_start = payload.input_start_date
         declared_end = payload.input_end_date
-        declared_min_ts, declared_max_ts = _range_from_declared(declared_start, declared_end)
-        if declared_min_ts is not None:
-            if min_ts.date() < declared_start or max_ts.date() > declared_end:
+        try:
+            declared_min_date, declared_max_date = _range_from_declared(declared_start, declared_end)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "invalid_declared_range",
+                    "message": str(e),
+                    "input_start_date": declared_start.isoformat() if declared_start else None,
+                    "input_end_date": declared_end.isoformat() if declared_end else None,
+                },
+            )
+        if declared_min_date is not None:
+            if min_ts.date() < declared_min_date or max_ts.date() > declared_max_date:
                 raise HTTPException(
                     status_code=400,
                     detail={
                         "error": "inferred range outside declared range",
                         "declared_range": {
-                            "input_start_date": declared_start.isoformat(),
-                            "input_end_date": declared_end.isoformat(),
+                            "input_start_date": declared_min_date.isoformat(),
+                            "input_end_date": declared_max_date.isoformat(),
                         },
                         "inferred_range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
                     },
                 )
         effective_watermark = watermark_ts or max_ts
-        key_min_ts = declared_min_ts or min_ts
-        key_max_ts = declared_max_ts or max_ts
+        key_min_ts = declared_min_date or min_ts.date()
+        key_max_ts = declared_max_date or max_ts.date()
 
         idem_key = compute_feed_idempotency_key(
             subject_ref=payload.subject_ref,
@@ -510,10 +528,10 @@ async def ingest_feed(
             "cct_unknown_rate": round(cct_unknown_rate, 6),
             "payer_token_present": payer_token_present,
         }
-        if declared_min_ts is not None:
+        if declared_min_date is not None:
             response["declared_range"] = {
-                "input_start_date": declared_start.isoformat(),
-                "input_end_date": declared_end.isoformat(),
+                "input_start_date": declared_min_date.isoformat(),
+                "input_end_date": declared_max_date.isoformat(),
             }
         if watermark_ts is not None and watermark_ts != effective_watermark:
             response["effective_watermark_ts"] = effective_watermark.isoformat()
