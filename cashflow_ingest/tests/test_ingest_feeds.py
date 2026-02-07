@@ -139,3 +139,26 @@ def test_feed_invalid_rows_rejected_and_counted():
     assert body["rows_rejected"] == 2
     assert body["rejection_breakdown"]["INVALID_TS"] == 1
     assert body["rejection_breakdown"]["INVALID_AMOUNT"] == 1
+
+
+def test_feed_declared_range_validation():
+    client = TestClient(app)
+    payload = {
+        "subject_ref": "m1",
+        "source": "PAYTM",
+        "watermark_ts": "2025-01-02T00:00:00+05:30",
+        "input_start_date": "2025-01-01",
+        "input_end_date": "2025-01-01",
+        "events": [
+            {
+                "merchant_id": "m1",
+                "ts": "2025-01-02T00:00:00+05:30",
+                "amount": 10,
+                "direction": "credit",
+                "channel": "UPI",
+            }
+        ],
+    }
+    resp = _post_feed(client, payload)
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["error"] == "inferred range outside declared range"

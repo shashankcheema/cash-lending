@@ -37,7 +37,10 @@ Response:
 ### `POST /v1/ingest/files`
 Multipart form fields:
 - `subject_ref` (string): internal non-PII merchant reference.
+- `subject_ref_version` (string, optional): alias version for re-keying.
 - `source` (string): e.g., `PAYTM`, `BANK`.
+- `input_start_date` (YYYY-MM-DD, optional)
+- `input_end_date` (YYYY-MM-DD, optional)
 - `file` (CSV).
 
 Required CSV columns:
@@ -54,6 +57,7 @@ Optional columns (Paytm-like):
 
 Response includes:
 - `batch_id`, `idempotency_key`, file hash
+- `declared_range` (if provided), `inferred_range` (always)
 - `rows_accepted`, `rows_rejected`, `rejection_breakdown`, `accepted_partial_rows`
 - inferred date range
 - number of aggregate days
@@ -69,9 +73,12 @@ curl -X POST http://localhost:8000/v1/ingest/files \
 ### `POST /v1/ingest/feeds`
 JSON body:
 - `subject_ref` (string): internal non-PII merchant reference.
+- `subject_ref_version` (string, optional): alias version for re-keying.
 - `source` (string): e.g., `PAYTM`, `BANK`.
 - `watermark_ts` (datetime, required): upstream checkpoint for this batch.
 - `allow_missing_watermark` (bool, optional; dev-only with env gate).
+- `input_start_date` (YYYY-MM-DD, optional)
+- `input_end_date` (YYYY-MM-DD, optional)
 - `events` (array of objects):
   - `merchant_id`, `ts`, `amount`, `direction`, `channel`
 
@@ -79,7 +86,7 @@ Response includes:
 - `batch_id`, `idempotency_key`
 - `rows_accepted`, `rows_rejected`, `rejection_breakdown`
 - `watermark_ts`
-- inferred date range
+- `declared_range` (if provided), `inferred_range` (always)
 - number of aggregate days
 
 Example:
@@ -143,6 +150,9 @@ Idempotency key:
 sha256(subject_ref + source + file_hash + min_date + max_date)
 ```
 Re-ingesting the same file deterministically returns `409 Conflict`.
+
+If `input_start_date` and `input_end_date` are provided, they are used in the idempotency key.
+The inferred min/max from parsed rows must fall within the declared range.
 
 ## Configuration
 - `MIN_ACCEPT_RATIO` (default `0.10`): minimum accepted/total ratio.

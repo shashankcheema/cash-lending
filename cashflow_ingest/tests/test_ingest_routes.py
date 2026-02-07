@@ -84,6 +84,24 @@ def test_ingest_empty_batch_returns_400():
     assert body["detail"]["error"] == "empty batch"
 
 
+def test_ingest_declared_range_validation():
+    client = TestClient(app)
+    csv = (
+        "merchant_id,ts,amount,direction,channel\n"
+        "m1,2025-01-05T00:00:00+05:30,10,credit,UPI\n"
+    )
+    files = {"file": ("test.csv", _csv_bytes(csv), "text/csv")}
+    data = {
+        "subject_ref": "m1",
+        "source": "PAYTM",
+        "input_start_date": "2025-01-01",
+        "input_end_date": "2025-01-02",
+    }
+    resp = client.post("/v1/ingest/files", data=data, files=files)
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["error"] == "inferred range outside declared range"
+
+
 def test_min_accept_ratio_guard(monkeypatch):
     client = TestClient(app)
     monkeypatch.setenv("MIN_ACCEPT_RATIO", "0.9")

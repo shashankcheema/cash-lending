@@ -10,8 +10,10 @@ class StoragePort(ABC):
         self,
         *,
         subject_ref: str,
+        subject_ref_version: str | None,
         source: str,
-        filename: str,
+        filename_hash: str,
+        file_ext: str,
         file_hash_sha256: str,
         idempotency_key: str,
         rows_accepted: int,
@@ -29,4 +31,3 @@ class StoragePort(ABC):
         daily_aggs: Dict[date, Tuple[float, float]],
     ) -> None:
         """daily_aggs: day -> (inflow, outflow)"""
-

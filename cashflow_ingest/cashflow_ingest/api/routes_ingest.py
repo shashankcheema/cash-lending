@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import date, datetime, time
 import pandas as pd
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 
@@ -81,11 +82,36 @@ def _payload_hash(events: list[dict]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _parse_date(val: str | None) -> date | None:
+    if val is None:
+        return None
+    return date.fromisoformat(val)
+
+
+def _range_from_declared(
+    declared_start: date | None,
+    declared_end: date | None,
+) -> tuple[datetime | None, datetime | None]:
+    if declared_start is None and declared_end is None:
+        return None, None
+    if declared_start is None or declared_end is None:
+        raise ValueError("both input_start_date and input_end_date must be provided")
+    if declared_start > declared_end:
+        raise ValueError("input_start_date must be <= input_end_date")
+    return (
+        datetime.combine(declared_start, time.min),
+        datetime.combine(declared_end, time.max),
+    )
+
+
 @router.post("/files")
 async def ingest_file(
     request: Request,
     subject_ref: str = Form(...),
+    subject_ref_version: str | None = Form(None),
     source: str = Form(...),
+    input_start_date: str | None = Form(None),
+    input_end_date: str | None = Form(None),
     file: UploadFile = File(...),
 ):
     """
@@ -98,6 +124,9 @@ async def ingest_file(
             raise ValueError("empty file")
 
         file_hash = sha256_file_bytes(raw)
+        filename = file.filename or ""
+        filename_hash = hashlib.sha256(filename.encode("utf-8")).hexdigest() if filename else ""
+        file_ext = os.path.splitext(filename)[1].lower() if filename else ""
 
         df = read_csv_bytes_with_extras(raw)
 
@@ -199,12 +228,32 @@ async def ingest_file(
             )
 
         min_ts, max_ts = infer_min_max_ts(events)
+        declared_start = _parse_date(input_start_date)
+        declared_end = _parse_date(input_end_date)
+        declared_min_ts, declared_max_ts = _range_from_declared(declared_start, declared_end)
+        if declared_min_ts is not None:
+            if min_ts.date() < declared_start or max_ts.date() > declared_end:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "inferred range outside declared range",
+                        "declared_range": {
+                            "input_start_date": declared_start.isoformat(),
+                            "input_end_date": declared_end.isoformat(),
+                        },
+                        "inferred_range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
+                    },
+                )
+
+        key_min_ts = declared_min_ts or min_ts
+        key_max_ts = declared_max_ts or max_ts
+
         idem_key = compute_batch_idempotency_key(
             subject_ref=subject_ref,
             source=source,
             file_hash_hex=file_hash,
-            min_ts=min_ts,
-            max_ts=max_ts,
+            min_ts=key_min_ts,
+            max_ts=key_max_ts,
         )
 
         daily = compute_daily_inflow_outflow(events)
@@ -213,8 +262,10 @@ async def ingest_file(
         try:
             batch_id = storage.persist_batch(
                 subject_ref=subject_ref,
+                subject_ref_version=subject_ref_version,
                 source=source,
-                filename=file.filename or "",
+                filename_hash=filename_hash,
+                file_ext=file_ext,
                 file_hash_sha256=file_hash,
                 idempotency_key=idem_key,
                 rows_accepted=len(events),
@@ -229,12 +280,15 @@ async def ingest_file(
         except DuplicateBatchError as e:
             raise HTTPException(status_code=409, detail=str(e))
 
-        return {
+        response = {
             "status": "INGESTED_DERIVED_ONLY",
             "batch_id": batch_id,
             "subject_ref": subject_ref,
+            "subject_ref_version": subject_ref_version,
             "source": source,
-            "filename": file.filename,
+            "filename": filename,
+            "filename_hash": filename_hash,
+            "file_ext": file_ext,
             "file_hash_sha256": file_hash,
             "idempotency_key": idem_key,
             "rows_accepted": len(events),
@@ -242,8 +296,15 @@ async def ingest_file(
             "rejection_breakdown": rejection_breakdown,
             "accepted_partial_rows": accepted_partial_rows,
             "range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
+            "inferred_range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
             "daily_aggregate_days": len(daily),
         }
+        if declared_min_ts is not None:
+            response["declared_range"] = {
+                "input_start_date": declared_start.isoformat(),
+                "input_end_date": declared_end.isoformat(),
+            }
+        return response
 
     except HTTPException:
         raise
@@ -323,14 +384,32 @@ async def ingest_feed(
             )
 
         min_ts, max_ts = infer_min_max_ts(events)
+        declared_start = payload.input_start_date
+        declared_end = payload.input_end_date
+        declared_min_ts, declared_max_ts = _range_from_declared(declared_start, declared_end)
+        if declared_min_ts is not None:
+            if min_ts.date() < declared_start or max_ts.date() > declared_end:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "inferred range outside declared range",
+                        "declared_range": {
+                            "input_start_date": declared_start.isoformat(),
+                            "input_end_date": declared_end.isoformat(),
+                        },
+                        "inferred_range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
+                    },
+                )
         effective_watermark = watermark_ts or max_ts
+        key_min_ts = declared_min_ts or min_ts
+        key_max_ts = declared_max_ts or max_ts
 
         idem_key = compute_feed_idempotency_key(
             subject_ref=payload.subject_ref,
             source=payload.source,
             watermark_ts=effective_watermark,
-            min_ts=min_ts,
-            max_ts=max_ts,
+            min_ts=key_min_ts,
+            max_ts=key_max_ts,
             event_count=event_count,
             payload_hash_hex=payload_hash,
         )
@@ -367,8 +446,10 @@ async def ingest_feed(
         try:
             batch_id = storage.persist_batch(
                 subject_ref=payload.subject_ref,
+                subject_ref_version=payload.subject_ref_version,
                 source=payload.source,
-                filename="",
+                filename_hash="",
+                file_ext="",
                 file_hash_sha256=payload_hash,
                 idempotency_key=idem_key,
                 rows_accepted=len(events),
@@ -387,6 +468,7 @@ async def ingest_feed(
             "status": "INGESTED_DERIVED_ONLY",
             "batch_id": batch_id,
             "subject_ref": payload.subject_ref,
+            "subject_ref_version": payload.subject_ref_version,
             "source": payload.source,
             "idempotency_key": idem_key,
             "rows_accepted": len(events),
@@ -394,8 +476,14 @@ async def ingest_feed(
             "rejection_breakdown": rejection_breakdown,
             "watermark_ts": effective_watermark.isoformat(),
             "range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
+            "inferred_range": {"min_ts": min_ts.isoformat(), "max_ts": max_ts.isoformat()},
             "daily_aggregate_days": len(daily),
         }
+        if declared_min_ts is not None:
+            response["declared_range"] = {
+                "input_start_date": declared_start.isoformat(),
+                "input_end_date": declared_end.isoformat(),
+            }
         if watermark_ts is not None and watermark_ts != effective_watermark:
             response["effective_watermark_ts"] = effective_watermark.isoformat()
 

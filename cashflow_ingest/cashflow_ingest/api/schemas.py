@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
@@ -60,7 +60,10 @@ class FeedIngestRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     subject_ref: str = Field(..., description="Internal merchant reference (non-PII)")
+    subject_ref_version: str | None = Field(None, description="Opaque alias version")
     source: str
     watermark_ts: datetime | None = Field(None, description="Upstream checkpoint for this batch")
     allow_missing_watermark: bool = False
+    input_start_date: date | None = None
+    input_end_date: date | None = None
     events: list[FeedEvent]
